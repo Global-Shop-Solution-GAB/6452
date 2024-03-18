@@ -1,0 +1,106 @@
+Program.Sub.Preflight.Start
+Program.External.Include.Library("450100.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+	'Hook 50620
+	f.ODBC.Connection!con6452.opencompanyconnection(90)
+	
+	f.Intrinsic.Control.CallSub(UpdateSFDC)
+	
+f.Intrinsic.Control.Catch
+	F.Intrinsic.UI.Msgbox(V.Ambient.ErrorDescription)
+	F.ODBC.Connection!CON6452.Close
+	f.Intrinsic.Control.End
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.updateSFDC.Start
+f.Intrinsic.Control.Try
+	v.Local.sSql.Declare
+	v.Local.sJS.Declare
+	v.Local.sJob.Declare
+	v.Local.sSuf.Declare
+	v.local.sSeq.Declare
+	v.Local.sWC.Declare
+	v.Local.fPCC.Declare
+	v.Local.fBad.Declare
+	v.Local.fEst.Declare
+	v.Local.fAct.Declare
+	v.Local.fDiff.Declare
+	V.Local.sMat.Declare
+	v.Local.sMatSeq.Declare
+	v.Local.sReadRow.Declare
+	v.Local.iRowCnt.Declare
+	V.Local.i.Declare
+	v.Local.j.Declare(long)
+	
+	'Grab the grid control
+	f.Intrinsic.BDF.Load("updateJobsView-gvWOOperations-bdf","updateJobsView-gvWOOperations-bdf")
+	F.Intrinsic.BDF.Clone("updateJobsView-gvWOOperations-bdf","Clone")
+	f.Intrinsic.BDF.ReadRowCount("updateJobsView-gvWOOperations-bdf",v.Local.iRowCnt)
+	f.Intrinsic.Math.Sub(v.Local.iRowCnt,1,v.Local.iRowCnt)
+			
+	f.Intrinsic.Control.For(v.Local.i,0,v.Local.iRowCnt,1)
+		f.Intrinsic.BDF.ReadRow("updateJobsView-gvWOOperations-bdf",V.Local.i,v.Local.sReadRow)
+		f.Intrinsic.String.Split(v.Local.sReadRow,"|~|",v.Local.sReadRow)
+		f.Intrinsic.String.Split(v.Local.sReadRow(0),"-",v.Local.sJS)
+		v.Local.sJob.Set(v.Local.sJS(0))
+		v.Local.sSuf.Set(v.Local.sJS(1))
+		v.Local.sSeq.Set(v.Local.sReadRow(1))
+		v.Local.sWC.Set(v.Local.sReadRow(2))
+		v.Local.fPcC.Set(v.Local.sReadRow(3))
+		v.Local.fBad.Set(v.Local.sReadRow(4))
+		
+		'IF PIECE COUNT REPORTED, PROCEED WITH BACKFLUSH
+		F.Intrinsic.Control.If(V.Local.fPCC,>,0)
+		
+			'Update part
+			F.Intrinsic.Control.SelectCase(v.Local.swc)
+				f.Intrinsic.Control.Case("CUTT")
+					f.Intrinsic.String.Build("select * from v_job_operations where job = '{0}' and suffix = '{1}' and lmo='M' and part<>'' and left(part,3)='BRD' AND (FLAG_CLOSED='N' or FLAG_CLOSED='')",v.local.sJob.Trim,v.Local.sSuf.Trim,v.Local.sSql)
+				f.Intrinsic.Control.Case("EDGE")
+					f.Intrinsic.String.Build("select * from v_job_operations where job = '{0}' and suffix = '{1}' and lmo='M' and part<>'' and left(part,3)='EDG' AND (FLAG_CLOSED='N' or FLAG_CLOSED='')",v.local.sJob.Trim,v.Local.sSuf.Trim,v.Local.sSql)
+				f.Intrinsic.Control.Case("ASSB")
+					f.Intrinsic.String.Build("select * from v_job_operations where job = '{0}' and suffix = '{1}' and lmo='M' and part<>'' AND LEFT(PART,3)<>'BRD' AND LEFT(PART,3)<>'EDG' AND LEFT(PART,3)<>'GLA' AND LEFT(PART,3)<>'PNT' AND (FLAG_CLOSED='N' or FLAG_CLOSED='')",v.local.sJob.Trim,v.Local.sSuf.Trim,v.Local.sSql)
+			F.Intrinsic.Control.EndSelect
+			
+			f.Data.DataTable.CreateFromSQL("dtMAT","con6452",v.Local.sSql)
+			
+			f.Intrinsic.Control.For(v.Local.j,0,v.DataTable.dtMAT.RowCount--,1)
+				v.Local.fEst.Set(v.DataTable.dtMAT(v.Local.j).HOURS_ESTIMATED!Fieldval)
+				v.Local.fAct.Set(v.DataTable.dtMAT(v.Local.j).HOURS_ACTUAL!Fieldval)
+				v.Local.sMatSeq.Set(v.DataTable.dtMAT(v.Local.j).SEQ!FieldvalTRIM)
+				v.Local.sMat.Set(v.DataTable.dtMAT(v.Local.j).PART!FIELDVALTRIM)
+				f.Intrinsic.Math.Sub(v.Local.fEst,v.Local.fAct,v.Local.fDiff)
+				f.Data.DataTable.AddRow("450100","PART",V.Local.sMat,"Quantity",v.Local.fDiff,"WONumber",v.Local.sJob,"WOSuffix",V.Local.sSuf,"WOSeq",V.Local.sMatSeq)
+			f.Intrinsic.Control.Next(v.Local.j)
+		F.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.Next(v.Local.i)
+	
+	f.Intrinsic.UI.InvokeWaitDialog("Backflushing Materials")
+	F.Intrinsic.Control.CallSub(450100Sync)
+	
+	'Find any parts that have a full issue and close the sequence 
+	F.Intrinsic.Control.SelectCase(v.Local.swc)
+		f.Intrinsic.Control.Case("CUTT")
+			f.Intrinsic.String.Build("UPDATE job_operations SET FLAG_CLOSED='Y' where job = '{0}' and suffix = '{1}' and lmo='M' and part<>'' and left(part,3)='BRD' AND (HOURS_ACTUAL >= HOURS_ESTIMATED)",v.local.sJob.Trim,v.Local.sSuf.Trim,v.Local.sSql)
+		f.Intrinsic.Control.Case("EDGE")
+			f.Intrinsic.String.Build("UPDATE job_operations SET FLAG_CLOSED='Y' where job = '{0}' and suffix = '{1}' and lmo='M' and part<>'' and left(part,3)='EDG' AND (HOURS_ACTUAL >= HOURS_ESTIMATED)",v.local.sJob.Trim,v.Local.sSuf.Trim,v.Local.sSql)
+		f.Intrinsic.Control.Case("ASSB")
+			f.Intrinsic.String.Build("UPDATE job_operations SET FLAG_CLOSED='Y' where job = '{0}' and suffix = '{1}' and lmo='M' and part<>'' AND left(PART,3)<>'BRD' AND left(PART,3)<>'EDG' AND left(PART,3)<>'GLA' AND left(PART,3)<>'PNT' AND (HOURS_ACTUAL >= HOURS_ESTIMATED)",v.local.sJob.Trim,v.Local.sSuf.Trim,v.Local.sSql)
+	F.Intrinsic.Control.EndSelect
+	
+	F.ODBC.Connection!CON6452.EXECUTE(V.Local.SSQL)
+	
+	'CLOSE PROGRAM
+	F.ODBC.Connection!con6452.Close
+	f.Intrinsic.Control.End
+
+
+f.Intrinsic.Control.catch
+	f.Intrinsic.Control.CallSub(Catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+	f.Intrinsic.Control.CallSub(unload)
+f.Intrinsic.Control.EndTry
+Program.Sub.updateSFDC.End
